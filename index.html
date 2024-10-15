@@ -58,6 +58,7 @@
           'src/scene.gltf', // Путь к вашей 3D модели
           function (gltf) {
             model = gltf.scene;
+
             // Получаем размер модели
             const box = new THREE.Box3().setFromObject(model);
             model.scale.set(3, 3, 3);
@@ -65,17 +66,16 @@
             const modelWidth = box.max.x - box.min.x;  // Ширина модели
             const modelDepth = box.max.z - box.min.z;  // Глубина модели
 
-            model_position_X = 0
-            model_position_y = 6
-            model_position_z = 0
+            model_position_X = 0;
+            model_position_y = 6;
+            model_position_z = 0;
             model.position.set(model_position_X, model_position_y, model_position_z);
             scene.add(model);
-            console.log(modelHeight)
 
             // Создаем физическое тело для модели с учетом размеров
             const modelShape = new CANNON.Box(new CANNON.Vec3(modelWidth / 2, modelHeight / 2, modelDepth / 2)); // Создаем форму на основе реальных размеров
             modelBody = new CANNON.Body({
-              mass: 1, // Масса модели
+              mass: 70, // Масса модели
               position: new CANNON.Vec3(model_position_X, model_position_y - modelHeight / 2, model_position_z), // Учитываем половину высоты
             });
             modelBody.addShape(modelShape);
@@ -93,7 +93,6 @@
             // Добавляем плоскость в сцену
             scene.add(plane);
 
-
             // Создаем физическое тело для плоскости (статичное)
             const planeShape = new CANNON.Plane();
             const planeBody = new CANNON.Body({
@@ -105,12 +104,68 @@
             planeBody.quaternion.copy(quaternion);
             planeBody.addShape(planeShape);
             world.addBody(planeBody);
+
+            // Теперь отрисуем линии, соответствующие граням модели
+
+            model.traverse((child) => {
+              if (child.isMesh) {
+                const geometry = child.geometry;
+
+                // Если у геометрии нет индексов, создаем их вручную
+                if (geometry.index === null) {
+                  geometry = geometry.toNonIndexed(); // Преобразуем в неиндексированную геометрию
+                }
+
+                // Проверим, если у нас есть атрибуты для позиции
+                if (geometry.attributes.position) {
+                  geometry.computeBoundingBox(); // Вычислим boundingBox вручную, если это не сделано
+                  geometry.computeBoundingSphere(); // Попробуем пересчитать BoundingSphere
+                }
+
+                const material = new THREE.LineBasicMaterial({ color: 0xff0000 });
+                const lines = new THREE.BufferGeometry();
+                const positions = [];
+
+                // Для каждой грани модели добавляем её вершины в массив
+                const indices = geometry.index ? geometry.index.array : [];
+                const positionsArray = geometry.attributes.position.array;
+
+                // Если индексы есть, строим линии по индексам
+                if (indices.length > 0) {
+                  for (let i = 0; i < indices.length; i += 3) {
+                    const v1 = new THREE.Vector3().fromArray(positionsArray, indices[i] * 3);
+                    const v2 = new THREE.Vector3().fromArray(positionsArray, indices[i + 1] * 3);
+                    const v3 = new THREE.Vector3().fromArray(positionsArray, indices[i + 2] * 3);
+
+                    // Добавляем линии (треугольники)
+                    positions.push(v1.x, v1.y, v1.z, v2.x, v2.y, v2.z);
+                    positions.push(v2.x, v2.y, v2.z, v3.x, v3.y, v3.z);
+                    positions.push(v3.x, v3.y, v3.z, v1.x, v1.y, v1.z);
+                  }
+                } else {
+                  // Если индексов нет, просто рисуем по массиву вершин
+                  for (let i = 0; i < positionsArray.length; i += 3) {
+                    positions.push(positionsArray[i], positionsArray[i + 1], positionsArray[i + 2]);
+                  }
+                }
+
+                // Преобразуем массив вершин в BufferGeometry
+                lines.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3));
+
+                // Создаем линию
+                const line = new THREE.LineSegments(lines, material);
+                child.add(line); // Добавляем линии к объекту
+              }
+            });
+
           },
           undefined,
           function (error) {
             console.error(error);
           }
   );
+
+
 
   // Создаем оси
   const axesHelper = new THREE.AxesHelper(10); // Размер осей 5
@@ -139,49 +194,58 @@
   createTextLabel("Y", new THREE.Vector3(-5, 6, -5)); // Подпись оси Z
 
 
-  // Создаем 3D-кнопку
-  const buttonGeometry = new THREE.BoxGeometry(1.5, 0.6, 0.5);
-  const buttonMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 });
-  const button = new THREE.Mesh(buttonGeometry, buttonMaterial);
-  button.position.set(-1.5, 1.1, 6.5); // Позиция кнопки
-  button.rotation.y = -50
-  scene.add(button);
+  let transparencyEnabled = false;
 
-  // Функция для создания текстовой текстуры
-  function createTextTexture(text) {
-    const canvas = document.createElement('canvas');
-    const context = canvas.getContext('2d');
+  // Функция для создания кнопки с текстом
+  function createButtonWithText(position, rotation, text) {
+    // Создаем кнопку
+    const buttonGeometry = new THREE.BoxGeometry(1.5, 0.6, 0.5);
+    const buttonMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+    const button = new THREE.Mesh(buttonGeometry, buttonMaterial);
+    button.position.set(position.x, position.y, position.z);
+    button.rotation.y = rotation;
+    scene.add(button);
 
-    // Устанавливаем размеры холста и текста
-    canvas.width = 1000;
-    canvas.height = 400;
+    // Функция для создания текстуры с текстом
+    function createTextTexture(text) {
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('2d');
+      canvas.width = 1000;
+      canvas.height = 400;
+      context.fillStyle = '#ff0000'; // Белый фон
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.fillStyle = '#fff'; // Белый текст
+      context.font = '100px Arial';
+      context.textAlign = 'center';
+      context.textBaseline = 'middle';
+      context.fillText(text, canvas.width / 2, canvas.height / 2);
+      return new THREE.CanvasTexture(canvas);
+    }
 
-    // Задаем фон и цвет текста
-    context.fillStyle = '#ff0000'; // Белый фон
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    context.fillStyle = '#fff'; // Черный текст
-    context.font = '100px Arial'; // Размер и шрифт текста
-    context.textAlign = 'center';
-    context.textBaseline = 'middle';
-    context.fillText(text, canvas.width / 2, canvas.height / 2);
+    // Добавляем текстуру с надписью
+    const textTexture = createTextTexture(text);
+    const textMaterial = new THREE.MeshBasicMaterial({ map: textTexture });
+    const textGeometry = new THREE.PlaneGeometry(1.5, 0.6);
+    const textMesh = new THREE.Mesh(textGeometry, textMaterial);
+    textMesh.position.set(position.x + 0.06, position.y, position.z + 0.25); // Размещаем над кнопкой
+    textMesh.rotation.y = rotation;
+    scene.add(textMesh);
 
-    // Создаем текстуру из холста
-    const texture = new THREE.CanvasTexture(canvas);
-    return texture;
+    return button;
   }
 
-  // Добавляем текстуру с надписью "Click Me"
-  const textTexture = createTextTexture("запустить симуляцию");
-  const textMaterial = new THREE.MeshBasicMaterial({ map: textTexture });
-  const textGeometry = new THREE.PlaneGeometry(1.5, 0.6);
+  // Массив для кнопок
+  const buttons = [
+    { position: { x: -1.5, y: 1.1, z: 6.5 }, rotation: -50, text: "запустить симуляцию" },
+    { position: { x: -1.5, y: 2.1, z: 6.5 }, rotation: -50, text: "прозрачность" }
+  ];
 
-  // Создаем текстовую плоскость
-  const textMesh = new THREE.Mesh(textGeometry, textMaterial);
-  textMesh.position.set(-1.44, 1.1, 6.75); // Размещаем над кнопкой
-  textMesh.rotation.y = -50
-  scene.add(textMesh);
+  // Создаем кнопки и добавляем их в массив
+  buttons.forEach(buttonData => {
+    buttonData.button = createButtonWithText(buttonData.position, buttonData.rotation, buttonData.text);
+  });
 
-  // Добавляем событие нажатия на кнопку
+  // Обработчик клика
   window.addEventListener('click', function (event) {
     const mouse = new THREE.Vector2();
     mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
@@ -190,20 +254,48 @@
     const raycaster = new THREE.Raycaster();
     raycaster.setFromCamera(mouse, camera);
 
-    const intersects = raycaster.intersectObject(button);
-    if (intersects.length > 0) {
-      // Переключаем состояние гравитации
-      gravityEnabled = !gravityEnabled;
-
-      if (gravityEnabled) {
-        world.gravity.set(0, -9.81, 0);
-        console.log("Гравитация включена");
-      } else {
-        world.gravity.set(0, 0, 0);
-        console.log("Гравитация выключена");
+    // Проверяем пересечения с кнопками
+    buttons.forEach((buttonData, index) => {
+      const intersects = raycaster.intersectObject(buttonData.button);
+      if (intersects.length > 0) {
+        if (index === 0) {
+          // Переключаем состояние гравитации для первой кнопки
+          gravityEnabled = !gravityEnabled;
+          if (gravityEnabled) {
+            world.gravity.set(0, -9.81, 0);
+            console.log("Гравитация включена");
+          } else {
+            world.gravity.set(0, 0, 0);
+            console.log("Гравитация выключена");
+          }
+        } else if (index === 1) {
+          // Переключаем состояние прозрачности для второй кнопки
+          transparencyEnabled = !transparencyEnabled;
+          if (transparencyEnabled) {
+            console.log("Прозрачность включена");
+            model.traverse(function (child) {
+              if (child.isMesh) {
+                child.material.transparent = true;
+                child.material.opacity = 0;
+              }
+            });
+          } else {
+            console.log("Прозрачность выключена");
+            model.traverse(function (child) {
+              if (child.isMesh) {
+                child.material.transparent = false;
+                child.material.opacity = 1;
+              }
+            });
+          }
+        }
       }
-    }
+    });
   });
+
+
+
+
 
 
   // Анимация (функция будет постоянно вызываться для обновления сцены)
