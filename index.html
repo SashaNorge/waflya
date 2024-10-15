@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3D Scene with GLTF Model, Plane and Physics</title>
+  <style>
+    body { margin: 0; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+
+<!-- Подключаем Cannon.js последним -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/cannon.js/0.6.2/cannon.js"></script>
+
+<script>
+  // Объявляем глобальные переменные
+  let model, modelBody;
+  let gravityEnabled = false;
+
+  // Создаем сцену
+  const scene = new THREE.Scene();
+
+  // Создаем камеру
+  const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+
+  // Создаем рендерер и добавляем его в DOM
+  const renderer = new THREE.WebGLRenderer();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  document.body.appendChild(renderer.domElement);
+
+  // Добавляем OrbitControls для управления камерой
+  const controls = new THREE.OrbitControls(camera, renderer.domElement);
+
+  // Добавляем источник света
+  const light = new THREE.DirectionalLight(0xffffff, 0.5); // Белый свет
+  light.position.set(5, 5, 5);
+  scene.add(light);
+
+  const ambientLight_2 = new THREE.AmbientLight(0x404040, 3); // Увеличиваем интенсивность на 3
+  scene.add(ambientLight_2);
+
+  // Создаем физический мир с гравитацией
+  const world = new CANNON.World();
+  /*world.gravity.set(0, -9.81, 0);*/
+
+  // Размещаем камеру
+  camera.position.set(0, 2, 10);
+
+  // Используем GLTFLoader для загрузки 3D модели
+  const loader = new THREE.GLTFLoader();
+  loader.load(
+          'src/scene.gltf', // Путь к вашей 3D модели
+          function (gltf) {
+            model = gltf.scene;
+            // Получаем размер модели
+            const box = new THREE.Box3().setFromObject(model);
+            model.scale.set(3, 3, 3);
+            const modelHeight = box.max.y - box.min.y; // Высота модели
+            const modelWidth = box.max.x - box.min.x;  // Ширина модели
+            const modelDepth = box.max.z - box.min.z;  // Глубина модели
+
+            model_position_X = 0
+            model_position_y = 6
+            model_position_z = 0
+            model.position.set(model_position_X, model_position_y, model_position_z);
+            scene.add(model);
+            console.log(modelHeight)
+
+            // Создаем физическое тело для модели с учетом размеров
+            const modelShape = new CANNON.Box(new CANNON.Vec3(modelWidth / 2, modelHeight / 2, modelDepth / 2)); // Создаем форму на основе реальных размеров
+            modelBody = new CANNON.Body({
+              mass: 1, // Масса модели
+              position: new CANNON.Vec3(model_position_X, model_position_y - modelHeight / 2, model_position_z), // Учитываем половину высоты
+            });
+            modelBody.addShape(modelShape);
+            world.addBody(modelBody);
+
+            // Создаем плоскость под моделью
+            const planeGeometry = new THREE.PlaneGeometry(10, 10); // Размеры плоскости
+            const planeMaterial = new THREE.MeshStandardMaterial({ color: 0x888888, side: THREE.DoubleSide, wireframe: true, }); // Материал для плоскости
+            const plane = new THREE.Mesh(planeGeometry, planeMaterial);
+
+            // Размещаем плоскость под моделью
+            plane.rotation.x = -Math.PI / 2; // Поворачиваем плоскость, чтобы она была горизонтальной
+            plane.position.set(0, 0, 0);
+
+            // Добавляем плоскость в сцену
+            scene.add(plane);
+
+
+            // Создаем физическое тело для плоскости (статичное)
+            const planeShape = new CANNON.Plane();
+            const planeBody = new CANNON.Body({
+              mass: 0, // Масса 0 делает тело статичным
+              position: new CANNON.Vec3(0, 0, 0) // Позиция плоскости
+            });
+            const quaternion = new CANNON.Quaternion();
+            quaternion.setFromEuler(-Math.PI / 2, 0, 0); // Поворот на -90° по оси X
+            planeBody.quaternion.copy(quaternion);
+            planeBody.addShape(planeShape);
+            world.addBody(planeBody);
+          },
+          undefined,
+          function (error) {
+            console.error(error);
+          }
+  );
+
+  // Создаем оси
+  const axesHelper = new THREE.AxesHelper(10); // Размер осей 5
+  axesHelper.position.set(-5, 1, -5); // Поднимаем оси на 1 единицу по оси Y
+  scene.add(axesHelper);
+
+  // Функция для создания текстовых подписей для осей
+  function createTextLabel(text, position) {
+    const loader = new THREE.FontLoader();
+    loader.load('https://threejs.org/examples/fonts/helvetiker_regular.typeface.json', function(font) {
+      const geometry = new THREE.TextGeometry(text, {
+        font: font,
+        size: 0.2,
+        height: 0.05,
+      });
+      const material = new THREE.MeshBasicMaterial({ color: 0xffffff });
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.position.copy(position);
+      scene.add(mesh);
+    });
+  }
+
+  // Добавляем подписи к осям
+  createTextLabel("X", new THREE.Vector3(0, 1, -5)); // Подпись оси X
+  createTextLabel("Z", new THREE.Vector3(-5, 1, 0)); // Подпись оси Y
+  createTextLabel("Y", new THREE.Vector3(-5, 6, -5)); // Подпись оси Z
+
+
+  // Создаем 3D-кнопку
+  const buttonGeometry = new THREE.BoxGeometry(1.5, 0.6, 0.5);
+  const buttonMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+  const button = new THREE.Mesh(buttonGeometry, buttonMaterial);
+  button.position.set(-1.5, 1.1, 6.5); // Позиция кнопки
+  button.rotation.y = -50
+  scene.add(button);
+
+  // Функция для создания текстовой текстуры
+  function createTextTexture(text) {
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+
+    // Устанавливаем размеры холста и текста
+    canvas.width = 1000;
+    canvas.height = 400;
+
+    // Задаем фон и цвет текста
+    context.fillStyle = '#ff0000'; // Белый фон
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = '#fff'; // Черный текст
+    context.font = '100px Arial'; // Размер и шрифт текста
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.fillText(text, canvas.width / 2, canvas.height / 2);
+
+    // Создаем текстуру из холста
+    const texture = new THREE.CanvasTexture(canvas);
+    return texture;
+  }
+
+  // Добавляем текстуру с надписью "Click Me"
+  const textTexture = createTextTexture("запустить симуляцию");
+  const textMaterial = new THREE.MeshBasicMaterial({ map: textTexture });
+  const textGeometry = new THREE.PlaneGeometry(1.5, 0.6);
+
+  // Создаем текстовую плоскость
+  const textMesh = new THREE.Mesh(textGeometry, textMaterial);
+  textMesh.position.set(-1.44, 1.1, 6.75); // Размещаем над кнопкой
+  textMesh.rotation.y = -50
+  scene.add(textMesh);
+
+  // Добавляем событие нажатия на кнопку
+  window.addEventListener('click', function (event) {
+    const mouse = new THREE.Vector2();
+    mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+    mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(mouse, camera);
+
+    const intersects = raycaster.intersectObject(button);
+    if (intersects.length > 0) {
+      // Переключаем состояние гравитации
+      gravityEnabled = !gravityEnabled;
+
+      if (gravityEnabled) {
+        world.gravity.set(0, -9.81, 0);
+        console.log("Гравитация включена");
+      } else {
+        world.gravity.set(0, 0, 0);
+        console.log("Гравитация выключена");
+      }
+    }
+  });
+
+
+  // Анимация (функция будет постоянно вызываться для обновления сцены)
+  function animate() {
+    requestAnimationFrame(animate);
+
+    // Обновляем физический мир
+    world.step(1 / 60); // Обновление физики (с шагом 1/60)
+
+    // Проверка наличия модели и её физического тела
+    if (model && modelBody) {
+      // Обновляем позицию и вращение модели, если они инициализированы
+      if (model.position && modelBody.position) {
+        model.position.copy(modelBody.position);
+      }
+      if (model.rotation && modelBody.rotation) {
+        model.rotation.copy(modelBody.rotation);
+      }
+    }
+
+    // Обновляем управление камерой (OrbitControls)
+    controls.update();
+
+    // Рендерим сцену с камеры
+    renderer.render(scene, camera);
+  }
+
+  // Запускаем анимацию
+  animate();
+</script>
+
+</body>
+</html>
